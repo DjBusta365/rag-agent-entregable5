@@ -329,12 +329,7 @@ jobs:
               sleep 10
               continue
             fi
-            read -r STATE LATEST READY <<< "$(python -c '
-import json
-with open("aca_status.json", encoding="utf-8") as f:
-    props = json.load(f).get("properties", {})
-print(props.get("provisioningState", ""), props.get("latestRevisionName", ""), props.get("latestReadyRevisionName", ""))
-')"
+            read -r STATE LATEST READY <<< "$(python -c "import json; props = json.load(open('aca_status.json', encoding='utf-8')).get('properties', {}); print(props.get('provisioningState', ''), props.get('latestRevisionName', ''), props.get('latestReadyRevisionName', ''))")"
             echo "ProvisioningState: $STATE"
             echo "LatestRevision: $LATEST"
             echo "ReadyRevision: $READY"
@@ -365,14 +360,7 @@ print(props.get("provisioningState", ""), props.get("latestRevisionName", ""), p
             -X GET "$ACA_URL" \
             -H "Authorization: Bearer ${AZURE_BEARER_TOKEN}" \
             -H "Content-Type: application/json"
-          FQDN=$(python -c '
-import json
-with open("aca_final.json", encoding="utf-8") as f:
-    data = json.load(f)
-props = data.get("properties", {})
-ingress = props.get("configuration", {}).get("ingress", {})
-print(ingress.get("fqdn") or props.get("latestRevisionFqdn") or "")
-')
+          FQDN=$(python -c "import json; data = json.load(open('aca_final.json', encoding='utf-8')); props = data.get('properties', {}); ingress = props.get('configuration', {}).get('ingress', {}); print(ingress.get('fqdn') or props.get('latestRevisionFqdn') or '')")
           if [ -z "$FQDN" ]; then
             echo "::error::No se pudo obtener el FQDN de ACA."
             cat aca_final.json || true
