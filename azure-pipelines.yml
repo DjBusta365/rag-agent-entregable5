@@ -1,0 +1,528 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pool:
+  name: Default
+
+variables:
+  - group: vg-entregable5-rag
+  - name: imageTag
+    value: '$(Build.BuildId)'
+  - name: artifactName
+    value: 'drop-$(Build.BuildId)'
+
+stages:
+
+# ==========================================================
+# STAGE 1 - VALIDATE
+# ==========================================================
+- stage: Validate
+  displayName: 'Validar codigo y pruebas'
+  jobs:
+    - job: Tests
+      displayName: 'Instalar dependencias y ejecutar pytest'
+      steps:
+        - checkout: self
+
+        - powershell: |
+            $ErrorActionPreference = "Stop"
+
+            Write-Host "Directorio actual:"
+            Get-Location
+
+            Write-Host "Contenido del repositorio:"
+            Get-ChildItem
+
+            Write-Host "Version de Python:"
+            python --version
+
+            Write-Host "Version de pip:"
+            python -m pip --version
+
+            Write-Host "Actualizando pip:"
+            python -m pip install --upgrade pip
+
+            Write-Host "Instalando dependencias:"
+            python -m pip install -r requirements.txt
+
+            Write-Host "Ejecutando tests:"
+            python -m pytest -q
+          displayName: 'Ejecutar pruebas'
+
+        - powershell: |
+            $ErrorActionPreference = "Stop"
+
+            New-Item -ItemType Directory -Force -Path "$(Build.ArtifactStagingDirectory)\evidencias"
+
+            "BuildId=$(Build.BuildId)" | Out-File "$(Build.ArtifactStagingDirectory)\evidencias\build-info.txt"
+            "Commit=$(Build.SourceVersion)" | Out-File "$(Build.ArtifactStagingDirectory)\evidencias\build-info.txt" -Append
+            "Branch=$(Build.SourceBranch)" | Out-File "$(Build.ArtifactStagingDirectory)\evidencias\build-info.txt" -Append
+            "Fecha=$(Get-Date)" | Out-File "$(Build.ArtifactStagingDirectory)\evidencias\build-info.txt" -Append
+          displayName: 'Generar evidencia basica'
+
+
+# ==========================================================
+# STAGE 2 - BUILD AND PUSH TO ACR
+# ==========================================================
+- stage: BuildAndPush
+  displayName: 'Construir y publicar imagen en ACR'
+  dependsOn: Validate
+  condition: succeeded()
+  jobs:
+    - job: DockerBuild
+      displayName: 'Build and Push image to ACR'
+      steps:
+        - checkout: self
+
+        - task: AzureCLI@2
+          displayName: 'Docker build y push a ACR usando Service Connection Azure'
+          inputs:
+            azureSubscription: '$(azureServiceConnection)'
+            scriptType: 'ps'
+            scriptLocation: 'inlineScript'
+            useGlobalConfig: true
+            inlineScript: |
+              $ErrorActionPreference = "Stop"
+              $env:AZURE_CORE_ONLY_SHOW_ERRORS = "true"
+
+              Write-Host "============================================"
+              Write-Host "Variables recibidas"
+              Write-Host "azureServiceConnection: $(azureServiceConnection)"
+              Write-Host "acrName: $(acrName)"
+              Write-Host "acrLoginServer: $(acrLoginServer)"
+              Write-Host "imageRepository: $(imageRepository)"
+              Write-Host "dockerfilePath: $(dockerfilePath)"
+              Write-Host "resourceGroup: $(resourceGroup)"
+              Write-Host "imageTag: $(imageTag)"
+              Write-Host "============================================"
+
+              if ([string]::IsNullOrWhiteSpace("$(acrName)")) {
+                throw "Falta acrName en el Variable Group."
+              }
+
+              if ([string]::IsNullOrWhiteSpace("$(acrLoginServer)")) {
+                throw "Falta acrLoginServer en el Variable Group."
+              }
+
+              if ([string]::IsNullOrWhiteSpace("$(imageRepository)")) {
+                throw "Falta imageRepository en el Variable Group."
+              }
+
+              if ([string]::IsNullOrWhiteSpace("$(dockerfilePath)")) {
+                throw "Falta dockerfilePath en el Variable Group."
+              }
+
+              $imageBuildTag = "$(acrLoginServer)/$(imageRepository):$(imageTag)"
+              $imageLatestTag = "$(acrLoginServer)/$(imageRepository):latest"
+
+              Write-Host "Imagen build:"
+              Write-Host $imageBuildTag
+
+              Write-Host "Imagen latest:"
+              Write-Host $imageLatestTag
+
+              Write-Host "Comprobando sesion Azure desde Service Connection..."
+              az account show --output table --only-show-errors
+
+              if ($LASTEXITCODE -ne 0) {
+                throw "La Service Connection no ha podido autenticarse contra Azure."
+              }
+
+              Write-Host "Comprobando que el ACR existe..."
+              az acr show `
+                --name "$(acrName)" `
+                --resource-group "$(resourceGroup)" `
+                --output table `
+                --only-show-errors
+
+              if ($LASTEXITCODE -ne 0) {
+                throw "No se pudo consultar el ACR. Revisa permisos de la Service Connection sobre el Resource Group."
+              }
+
+              Write-Host "Comprobando Docker..."
+              docker version
+
+              if ($LASTEXITCODE -ne 0) {
+                throw "Docker no responde. Revisa Docker Desktop y que el agente este arrancado con run.cmd."
+              }
+
+              Write-Host "Limpiando login previo en ACR..."
+              docker logout "$(acrLoginServer)" 2>$null
+
+              Write-Host "Intentando login en ACR con az acr login..."
+              az acr login --name "$(acrName)" --only-show-errors
+
+              if ($LASTEXITCODE -ne 0) {
+                Write-Host "az acr login no ha funcionado. Se intentara login con credenciales admin del ACR..."
+
+                $acrUser = az acr credential show `
+                  --name "$(acrName)" `
+                  --query "username" `
+                  --output tsv `
+                  --only-show-errors
+
+                if ($LASTEXITCODE -ne 0) {
+                  throw "No se pudo obtener el usuario del ACR."
+                }
+
+                $acrPass = az acr credential show `
+                  --name "$(acrName)" `
+                  --query "passwords[0].value" `
+                  --output tsv `
+                  --only-show-errors
+
+                if ($LASTEXITCODE -ne 0) {
+                  throw "No se pudo obtener la password del ACR."
+                }
+
+                $acrUser = $acrUser.Trim()
+                $acrPass = $acrPass.Trim()
+
+                if ([string]::IsNullOrWhiteSpace($acrUser)) {
+                  throw "El usuario del ACR viene vacio. Revisa Admin user."
+                }
+
+                if ([string]::IsNullOrWhiteSpace($acrPass)) {
+                  throw "La password del ACR viene vacia. Revisa Admin user."
+                }
+
+                Write-Host "Login Docker contra ACR usando credenciales admin..."
+                docker login "$(acrLoginServer)" -u "$acrUser" -p "$acrPass"
+
+                if ($LASTEXITCODE -ne 0) {
+                  throw "docker login contra ACR ha fallado."
+                }
+              }
+              else {
+                Write-Host "Login en ACR correcto con az acr login."
+              }
+
+              Write-Host "Construyendo imagen Docker..."
+              docker build `
+                -f "$(dockerfilePath)" `
+                -t $imageBuildTag `
+                -t $imageLatestTag `
+                .
+
+              if ($LASTEXITCODE -ne 0) {
+                throw "docker build ha fallado."
+              }
+
+              Write-Host "Publicando imagen con tag de build..."
+              docker push $imageBuildTag
+
+              if ($LASTEXITCODE -ne 0) {
+                throw "docker push del tag de build ha fallado."
+              }
+
+              Write-Host "Publicando imagen latest..."
+              docker push $imageLatestTag
+
+              if ($LASTEXITCODE -ne 0) {
+                throw "docker push latest ha fallado."
+              }
+
+              Write-Host "Imagen publicada correctamente:"
+              Write-Host $imageBuildTag
+
+
+# ==========================================================
+# STAGE 3 - PUBLISH ARTIFACT
+# ==========================================================
+- stage: PublishArtifact
+  displayName: 'Publicar artifacts del pipeline'
+  dependsOn: BuildAndPush
+  condition: succeeded()
+  jobs:
+    - job: Publish
+      displayName: 'Empaquetar manifiestos y evidencias'
+      steps:
+        - checkout: self
+
+        - task: CopyFiles@2
+          displayName: 'Copiar archivos de entrega'
+          inputs:
+            SourceFolder: '$(Build.SourcesDirectory)'
+            Contents: |
+              app.py
+              Dockerfile
+              docker-compose.yml
+              requirements.txt
+              azure-pipelines.yml
+              tests/**
+              docs/**
+              README.md
+            TargetFolder: '$(Build.ArtifactStagingDirectory)\package'
+
+        - task: PublishPipelineArtifact@1
+          displayName: 'Publicar artifact del pipeline'
+          inputs:
+            targetPath: '$(Build.ArtifactStagingDirectory)'
+            artifact: '$(artifactName)'
+            publishLocation: 'pipeline'
+
+
+# ==========================================================
+# STAGE 4 - DEPLOY TO EXISTING AZURE CONTAINER APP
+# ==========================================================
+- stage: Deploy
+  displayName: 'Despliegue continuo a Azure Container Apps'
+  dependsOn: PublishArtifact
+  condition: succeeded()
+  jobs:
+    - job: DeployContainerApp
+      displayName: 'Actualizar Container App existente'
+      steps:
+        - checkout: self
+
+        - task: AzureCLI@2
+          displayName: 'Actualizar ACA existente usando Service Connection'
+          inputs:
+            azureSubscription: '$(azureServiceConnection)'
+            scriptType: 'ps'
+            scriptLocation: 'inlineScript'
+            useGlobalConfig: true
+            inlineScript: |
+              $ErrorActionPreference = "Stop"
+              $env:AZURE_CORE_ONLY_SHOW_ERRORS = "true"
+
+              $image = "$(acrLoginServer)/$(imageRepository):$(imageTag)"
+
+              Write-Host "============================================"
+              Write-Host "Desplegando imagen:"
+              Write-Host $image
+              Write-Host "Container App existente:"
+              Write-Host "$(containerAppName)"
+              Write-Host "Resource Group:"
+              Write-Host "$(resourceGroup)"
+              Write-Host "============================================"
+
+              Write-Host "Comprobando sesion Azure desde Service Connection..."
+              az account show --output table --only-show-errors
+
+              if ($LASTEXITCODE -ne 0) {
+                throw "La Service Connection no ha podido autenticarse contra Azure."
+              }
+
+              Write-Host "Comprobando que la Container App existe..."
+              $existingApp = az containerapp list `
+                --resource-group "$(resourceGroup)" `
+                --query "[?name=='$(containerAppName)'].name | [0]" `
+                --output tsv `
+                --only-show-errors
+
+              if ([string]::IsNullOrWhiteSpace($existingApp)) {
+                throw "No se ha encontrado la Container App $(containerAppName) en el Resource Group $(resourceGroup). Revisa el nombre exacto en el portal."
+              }
+
+              Write-Host "Container App encontrada:"
+              Write-Host $existingApp
+
+              Write-Host "Obteniendo credenciales reales del ACR..."
+              $acrUser = az acr credential show `
+                --name "$(acrName)" `
+                --query "username" `
+                --output tsv `
+                --only-show-errors
+
+              if ($LASTEXITCODE -ne 0) {
+                throw "No se pudo obtener el usuario del ACR."
+              }
+
+              $acrPass = az acr credential show `
+                --name "$(acrName)" `
+                --query "passwords[0].value" `
+                --output tsv `
+                --only-show-errors
+
+              if ($LASTEXITCODE -ne 0) {
+                throw "No se pudo obtener la password del ACR."
+              }
+
+              $acrUser = $acrUser.Trim()
+              $acrPass = $acrPass.Trim()
+
+              if ([string]::IsNullOrWhiteSpace($acrUser)) {
+                throw "El usuario del ACR viene vacio. Revisa que Admin user este activado."
+              }
+
+              if ([string]::IsNullOrWhiteSpace($acrPass)) {
+                throw "La password del ACR viene vacia. Revisa que Admin user este activado."
+              }
+
+              if ([string]::IsNullOrWhiteSpace($env:AZURE_SQL_CONNECTION_STRING)) {
+                throw "Falta AZURE_SQL_CONNECTION_STRING en el Variable Group."
+              }
+
+              Write-Host "Actualizando secreto de Azure SQL en la Container App..."
+              az containerapp secret set `
+                --name "$(containerAppName)" `
+                --resource-group "$(resourceGroup)" `
+                --secrets "azure-sql-connection-string=$env:AZURE_SQL_CONNECTION_STRING" `
+                --only-show-errors
+
+              if ($LASTEXITCODE -ne 0) {
+                throw "No se pudo actualizar el secreto de Azure SQL."
+              }
+
+              Write-Host "Configurando acceso de la Container App al ACR..."
+              az containerapp registry set `
+                --name "$(containerAppName)" `
+                --resource-group "$(resourceGroup)" `
+                --server "$(acrLoginServer)" `
+                --username "$acrUser" `
+                --password "$acrPass" `
+                --only-show-errors
+
+              if ($LASTEXITCODE -ne 0) {
+                throw "No se pudo configurar el acceso de la Container App al ACR."
+              }
+
+              Write-Host "Actualizando variables de entorno..."
+              az containerapp update `
+                --name "$(containerAppName)" `
+                --resource-group "$(resourceGroup)" `
+                --set-env-vars `
+                  APP_ENV=azure `
+                  LLM_PROVIDER=demo `
+                  AZURE_SQL_CONNECTION_STRING=secretref:azure-sql-connection-string `
+                  TOP_K=3 `
+                --only-show-errors
+
+              if ($LASTEXITCODE -ne 0) {
+                throw "No se pudieron actualizar las variables de entorno."
+              }
+
+              Write-Host "Actualizando imagen de la Container App existente..."
+              az containerapp update `
+                --name "$(containerAppName)" `
+                --resource-group "$(resourceGroup)" `
+                --image $image `
+                --only-show-errors
+
+              if ($LASTEXITCODE -ne 0) {
+                throw "No se pudo actualizar la imagen de la Container App."
+              }
+
+              Write-Host "Obteniendo FQDN publico..."
+              $fqdn = az containerapp show `
+                --name "$(containerAppName)" `
+                --resource-group "$(resourceGroup)" `
+                --query properties.configuration.ingress.fqdn `
+                --output tsv `
+                --only-show-errors
+
+              if ([string]::IsNullOrWhiteSpace($fqdn)) {
+                throw "No se pudo obtener el FQDN de la Container App."
+              }
+
+              Write-Host "============================================"
+              Write-Host "Aplicacion actualizada correctamente:"
+              Write-Host "https://$fqdn"
+              Write-Host "Health:"
+              Write-Host "https://$fqdn/health"
+              Write-Host "Swagger:"
+              Write-Host "https://$fqdn/docs"
+              Write-Host "============================================"
+          env:
+            AZURE_SQL_CONNECTION_STRING: $(AZURE_SQL_CONNECTION_STRING)
+
+
+# ==========================================================
+# STAGE 5 - VALIDATE DEPLOYMENT
+# ==========================================================
+- stage: ValidateDeployment
+  displayName: 'Validar despliegue'
+  dependsOn: Deploy
+  condition: succeeded()
+  jobs:
+    - job: ValidateEndpoints
+      displayName: 'Validar endpoints publicos'
+      steps:
+        - task: AzureCLI@2
+          displayName: 'Probar endpoints publicos'
+          inputs:
+            azureSubscription: '$(azureServiceConnection)'
+            scriptType: 'ps'
+            scriptLocation: 'inlineScript'
+            useGlobalConfig: true
+            inlineScript: |
+              $ErrorActionPreference = "Stop"
+              $env:AZURE_CORE_ONLY_SHOW_ERRORS = "true"
+
+              Write-Host "Obteniendo FQDN de la Container App..."
+              $fqdn = az containerapp show `
+                --name "$(containerAppName)" `
+                --resource-group "$(resourceGroup)" `
+                --query properties.configuration.ingress.fqdn `
+                --output tsv `
+                --only-show-errors
+
+              if ([string]::IsNullOrWhiteSpace($fqdn)) {
+                throw "No se pudo obtener el FQDN de la Container App."
+              }
+
+              $baseUrl = "https://$fqdn"
+
+              Write-Host "Base URL:"
+              Write-Host $baseUrl
+
+              Write-Host "Esperando a que ACA levante la nueva revision..."
+              Start-Sleep -Seconds 35
+
+              function Invoke-WithRetry {
+                param (
+                  [string]$Uri,
+                  [string]$Method = "GET",
+                  [string]$Body = "",
+                  [string]$ContentType = "application/json",
+                  [int]$Retries = 6,
+                  [int]$DelaySeconds = 10
+                )
+
+                for ($i = 1; $i -le $Retries; $i++) {
+                  try {
+                    Write-Host "Intento $i de $Retries -> $Uri"
+
+                    if ($Method -eq "POST") {
+                      return Invoke-RestMethod `
+                        -Method Post `
+                        -Uri $Uri `
+                        -ContentType $ContentType `
+                        -Body $Body
+                    }
+                    else {
+                      return Invoke-RestMethod -Uri $Uri
+                    }
+                  }
+                  catch {
+                    Write-Host "Intento fallido. Esperando $DelaySeconds segundos..."
+                    Start-Sleep -Seconds $DelaySeconds
+                  }
+                }
+
+                throw "No se pudo invocar $Uri despues de $Retries intentos."
+              }
+
+              Write-Host "Probando endpoint raiz..."
+              Invoke-WithRetry -Uri "$baseUrl/"
+
+              Write-Host "Probando /health..."
+              Invoke-WithRetry -Uri "$baseUrl/health"
+
+              Write-Host "Probando /knowledge..."
+              Invoke-WithRetry -Uri "$baseUrl/knowledge"
+
+              Write-Host "Probando /ask..."
+              $body = @{
+                question = "Explica que es RAG y que papel cumple Azure SQL en esta practica"
+              } | ConvertTo-Json
+
+              Invoke-WithRetry `
+                -Uri "$baseUrl/ask" `
+                -Method "POST" `
+                -Body $body
+
+              Write-Host "Validacion finalizada correctamente."

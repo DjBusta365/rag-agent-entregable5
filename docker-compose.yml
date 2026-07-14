@@ -1,0 +1,10 @@
+services:
+  agent:
+    build: .
+    image: rag-agent-entregable5:local
+    container_name: rag-agent-entregable5
+    ports:
+      - "8080:8000"
+    env_file:
+      - .env
+    restart: unless-stopped
