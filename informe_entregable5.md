@@ -11,6 +11,7 @@
 *   **API Web Desplegada (Swagger)**: [https://cae-entregable5-rag.salmoncliff-a6a6c436.francecentral.azurecontainerapps.io/docs](https://cae-entregable5-rag.salmoncliff-a6a6c436.francecentral.azurecontainerapps.io/docs)
 
 ---
+
 ## 1. OBJETIVO
 El objetivo de este proyecto es diseñar, implementar y desplegar un **Agente RAG (Retrieval-Augmented Generation)** escalable y de grado de producción en la nube de Microsoft Azure. 
 
@@ -56,109 +57,63 @@ graph TD
 
 ---
 
-## 3. DESARROLLO Y CONFIGURACIÓN LOCAL
+## 3. CONFIGURACIÓN Y ESTRUCTURACIÓN (Desarrollo y Estructura del Código)
+El proyecto cuenta con una estructura limpia y modular estructurada bajo una arquitectura en capas. Se excluyen del control de versiones los archivos de entorno mediante [.gitignore](file:///c:/DjBust@/Unir/Entregables/Ent%2005/rag-agent-entregable5/.gitignore):
 
-### Estructura del Repositorio y Configuración de Archivos
-El proyecto cuenta con una estructura limpia, excluyendo del control de versiones los archivos de entorno mediante [.gitignore](file:///c:/DjBust@/Unir/Entregables/Ent%2005/rag-agent-entregable5/.gitignore):
+*   **Modularidad**: La lógica de API ([api.py](file:///c:/DjBust@/Unir/Entregables/Ent%2005/rag-agent-entregable5/api.py)) se separa de la lógica del RAG ([agent.py](file:///c:/DjBust@/Unir/Entregables/Ent%2005/rag-agent-entregable5/agent.py)), los proveedores de IA ([ai_provider.py](file:///c:/DjBust@/Unir/Entregables/Ent%2005/rag-agent-entregable5/ai_provider.py)), los ajustes de configuración ([settings.py](file:///c:/DjBust@/Unir/Entregables/Ent%2005/rag-agent-entregable5/settings.py)) y la base de datos ([db.py](file:///c:/DjBust@/Unir/Entregables/Ent%2005/rag-agent-entregable5/db.py)).
+*   **Gestión de Entorno**: La configuración del entorno local se realiza mediante el archivo de variables [.env](file:///c:/DjBust@/Unir/Entregables/Ent%2005/rag-agent-entregable5/.env), el cual está debidamente excluido de Git para evitar fugas de información.
+*   **Conexión dinámica ODBC**: La base de datos implementa en [db.py](file:///c:/DjBust@/Unir/Entregables/Ent%2005/rag-agent-entregable5/db.py) una detección automática del driver ODBC para SQL Server de manera dinámica (utilizando `ODBC Driver 17` localmente y `ODBC Driver 18` en Docker) permitiendo la portabilidad absoluta del código.
 
-La configuración del entorno local se gestiona a través del archivo de configuración sensible [.env](file:///c:/DjBust@/Unir/Entregables/Ent%2005/rag-agent-entregable5/.env) (el cual está debidamente excluido de Git para evitar fugas de información):
+---
 
-### Contenerización Local con Docker
+## 4. CONTENERIZACIÓN (Dockerfile y Docker Compose)
 El backend está definido mediante un archivo `Dockerfile` optimizado y se levanta en conjunto con Docker Compose para desarrollo local rápido.
 
-La aplicación levanta localmente el servidor web Uvicorn (FastAPI) mapeando el puerto hacia la máquina host:
-
-### Validación Local de la API
-Para verificar que el agente responde correctamente antes de enviarlo a la nube, se prueba el Swagger interactivo local en `/docs` enviando preguntas al endpoint `/ask`:
-
----
-
-## 4. CONFIGURACIÓN EN AZURE Y REGISTRO DE CONTENEDORES
-
-### Base de Datos Azure SQL
-Se creó una Azure SQL Database. El firewall se configuró para permitir las conexiones de servicios de Azure y de la IP de desarrollo local. La estructura de la tabla `dbo.knowledge_chunks` y sus columnas se definieron en [db.py](file:///c:/DjBust@/Unir/Entregables/Ent%2005/rag-agent-entregable5/db.py):
-
-*(Se muestra la tabla dbo.knowledge_chunks creada y lista para almacenar embeddings y fragmentos)*
-
-*(Filas de ejemplo inicializadas en el Query Editor de Azure)*
-
-### Azure Container Registry (ACR)
-Se desplegó un ACR con el nombre `acragent5XXX` para almacenar las versiones de la API:
-
-*(Configuración del registro en el portal de Azure)*
-
-*(Claves de acceso y servidor de login del ACR)*
-
-### Etiquetado y Push Manual de Prueba
-Para verificar el correcto funcionamiento del registro de contenedores, se realizó una prueba manual iniciando sesión mediante Azure CLI y enviando la imagen local de la API al repositorio `rag-agent-api`:
-
-*(Repositorio de imágenes dentro de la consola del ACR)*
-
-*(Detalles de tags y tamaño de las capas de imagen en ACR)*
-
-### Azure Container Apps (ACA)
-Para alojar la API se configuró una Azure Container App sobre un entorno serverless gestionado:
-
-La aplicación fue configurada con Ingress externo en el puerto de destino `8000` para poder recibir tráfico HTTP seguro:
-
-Las credenciales sensibles de base de datos (`AZURE_SQL_CONNECTION_STRING`) y de Azure Container Registry se mapearon a secretos protegidos del servicio ACA para evitar que estén visibles en texto plano:
+*   **Dockerfile**: Basado en `python:3.11-slim-bookworm`. Instala las dependencias del sistema necesarias para compilar `pyodbc` e instala de forma segura el driver oficial `msodbcsql18`. Copia los requisitos y el código, exponiendo el puerto `8000`.
+*   **Docker Compose**: Define el servicio `agent` cargando de forma automática el archivo local `.env`. Mapea el puerto host `8080:8000` para evitar conflictos en el sistema host local y habilita la recarga automática en desarrollo.
+*   **Validación local**: Levantando el stack mediante `docker compose up -d`, la API arranca Uvicorn y expone la documentación Swagger en `/docs`. Permite validar localmente el endpoint `/health` (mostrando conexión exitosa a Azure SQL) y el endpoint `/ask`.
 
 ---
 
-## 5. AUTOMATIZACIÓN CI/CD CON GITHUB ACTIONS
+## 5. REGISTRO EN AZURE (Azure Container Registry - ACR)
+Para el almacenamiento de imágenes de contenedores en la nube de forma segura y privada, se configuró un registro en Azure:
 
-### Configuración de Secretos de Repositorio
-Para que GitHub Actions pueda autenticarse de manera autónoma con Azure, se configuraron los 11 secrets de repositorio, manteniendo la confidencialidad de la infraestructura:
-
-### Ejecución del Workflow
-El archivo de workflow [.github/workflows/deploy-aca.yml](file:///c:/DjBust@/Unir/Entregables/Ent%2005/rag-agent-entregable5/.github/workflows/deploy-aca.yml) orquesta todo el pipeline:
-
-*(El workflow se dispara automáticamente al hacer git push a main)*
-
-1.  **Validar Configuración**: Se comprueba la estructura del proyecto y los secretos necesarios:
-    
-
-2.  **Construir y Publicar Imagen**: Construcción de la imagen Docker etiquetada con el hash de commit (`IMAGE_TAG`) y subida al ACR:
-    
-
-3.  **Desplegar a ACA**: Lanzamiento de la orden de despliegue sobre Azure Container Apps usando la API REST de Azure Resource Manager:
-    
-
-4.  **Esperar la Nueva Revisión**: Bucle de comprobación que valida que la nueva versión del contenedor pase de estado "Provisioning" a "Succeeded":
-    
-
-5.  **Validar Endpoints**: Realización de llamadas de prueba a la URL pública final de ACA (`/health`, `/knowledge` y `/ask`) para certificar que el agente RAG está funcionando al 100% en la nube:
-    
-
-### Estado Exitoso del Pipeline
-El workflow completa todas las etapas de forma exitosa ("En Verde"):
+*   **Azure Container Registry**: Se desplegó el ACR con nombre `acragent5XXX` expuesto bajo el login server `acragent5xxx.azurecr.io`.
+*   **Autenticación**: Para permitir la subida local e integrada de la imagen, se habilitaron las claves de acceso de administrador en el ACR y se inició sesión en Docker local usando `az acr login`.
+*   **Subida e Inmutabilidad**: Se etiquetó la imagen local `rag-agent-api` en minúsculas y se subió mediante `docker push` con el tag del Commit SHA (`v1` / `v1.0.0`) y `latest`. Esto garantiza la inmutabilidad y la trazabilidad del código a producción.
 
 ---
 
-## 6. VALIDACIÓN EN EL ENTORNO DE NUBE (CLOUD)
+## 6. CONFIGURACIÓN Y EJECUCIÓN EN CONTAINER APPS (Despliegue en la Nube)
+Para la ejecución sin servidor (Serverless) de la API, se desplegó una Azure Container App (ACA):
 
-### URL Pública y Endpoint Health Cloud
-El despliegue provee un FQDN (Fully Qualified Domain Name) público HTTPS para la Container App:
-
-El endpoint `/health` de nube demuestra una conexión exitosa a Azure SQL Database (`"database": "connected"`):
-
-### Endpoint de Conocimiento e Ingesta Semántica
-El endpoint `/knowledge` expone los fragmentos de datos cargados en la base de datos de producción:
-
-### Consulta al Agente RAG (/ask cloud)
-Al consultar al agente a través del endpoint `/ask`, el sistema recupera la información relevante desde Azure SQL, calcula el score y redacta la respuesta contextualizada:
-
-### Logs de Operación en Azure
-La monitorización mediante logs del contenedor demuestra un arranque exitoso de la aplicación en la nube y el procesamiento de las peticiones HTTP GET y POST entrantes:
-
-### Swagger Interactivo Cloud y Resumen del Workflow
-Swagger UI está expuesto de forma pública bajo HTTPS en `/docs`:
-
-El pipeline de GitHub Actions resume todos los accesos rápidos en la sección de resumen del trabajo (`GITHUB_STEP_SUMMARY`):
+*   **Ingress Externo**: Se expuso la Container App de forma pública a través de Internet bajo HTTPS sobre el puerto de destino `8000` (el puerto interno en el que escucha Uvicorn dentro del contenedor).
+*   **Gestión de Secretos**: La cadena de conexión a la base de datos de producción (`AZURE_SQL_CONNECTION_STRING`) y la API key de OpenAI se registraron como secretos seguros del servicio ACA (`secrets`). Esto permite mapearlas a variables de entorno dentro del contenedor de forma referenciada (`secretref`), sin que se expongan en texto plano en la configuración del recurso.
+*   **Escalado**: La aplicación se aloja en un entorno de Container Apps escalable capaz de auto-escalar a cero instancias cuando no está recibiendo peticiones, reduciendo los costes operativos de infraestructura al mínimo.
 
 ---
 
-## 7. REFLEXIÓN Y CONCLUSIONES
+## 7. PIPELINE CI/CD (Automatización de Pruebas y Despliegue Continuo)
+Todo el flujo se automatiza en GitHub Actions a través de [.github/workflows/deploy-aca.yml](file:///c:/DjBust@/Unir/Entregables/Ent%2005/rag-agent-entregable5/.github/workflows/deploy-aca.yml), ejecutándose en cada push a la rama `main`:
+
+1.  **Ejecución de Pruebas (pytest)**: Levanta un entorno de ejecución temporal de Python 3.11, instala los paquetes de desarrollo y corre los tests unitarios.
+2.  **Validación de Configuración**: Verifica que existan archivos críticos (`Dockerfile`, `requirements.txt`) y que los 11 secretos del repositorio estén presentes y correctos en los GitHub Secrets.
+3.  **Docker Build and Push**: Inicia sesión en el ACR de Azure, compila la imagen inmutable asociándola al Commit SHA actual de Git y la sube al ACR.
+4.  **Despliegue Continuo (Deploy)**: Genera dinámicamente una plantilla JSON de despliegue (`aca_deployment.json`) a partir de la configuración existente y la actualiza en Azure mediante la API REST de Resource Manager.
+5.  **Validación Post-Despliegue**: El runner consulta en bucle el estado del aprovisionamiento de ACA hasta que la nueva revisión está marcada como *Succeeded*. Posteriormente, realiza llamadas HTTP de humo a `/health`, `/knowledge` y `/ask` sobre el FQDN público en Azure para certificar un despliegue exitoso.
+
+---
+
+## 8. MONITOREO Y VALIDACIÓN (Pruebas de Conexión y Logs en la Nube)
+Para asegurar el correcto funcionamiento del sistema en producción, se implementaron mecanismos de monitoreo y pruebas de conexión:
+
+*   **Validación de Salud (/health cloud)**: Las peticiones HTTPS GET al endpoint `/health` de nube retornan un estado `"status": "ok"` y confirman `"database": "connected"`, demostrando que ACA tiene acceso seguro y exitoso a Azure SQL Database.
+*   **Validación RAG (/ask cloud)**: El endpoint `/ask` responde de forma consistente y en lenguaje natural a partir del contexto recuperado dinámicamente de Azure SQL, listando las fuentes y sus correspondientes puntajes de similitud semántica.
+*   **Logs Operativos de ACA**: Se validaron los registros de ejecución y logs de arranque en caliente de la Container App (mediante el panel de Logs en Azure o Log Analytics), confirmando el encendido del servicio web Uvicorn y el registro exitoso de las peticiones HTTP entrantes.
+
+---
+
+## 9. REFLEXIÓN Y CONCLUSIONES
 
 ### Valor Añadido de RAG frente a APIs Tradicionales
 Las APIs tradicionales operan con un esquema determinista basado en consultas fijas a bases de datos estructuradas o fuentes de información estáticas. RAG, por el contrario, dota a la aplicación de **capacidad cognitiva de lenguaje natural combinada con fuentes dinámicas de conocimiento actualizado**, sin incurrir en los costes exorbitantes y complejidad del re-entrenamiento o fine-tuning de un LLM. 
@@ -175,21 +130,9 @@ En este proyecto, la API actúa como un puente semántico: recupera dinámicamen
 ## DEFENSA TÉCNICA
 > **“La solución integra un flujo RAG trazable con Azure SQL, Docker y ACR, desplegado en Azure Container Apps y automatizado de extremo a extremo mediante GitHub Actions, GitHub Secrets y etiquetas de imagen asociadas al commit.”**
 
-## 8. AUTOEVALUACIÓN Y RÚBRICA
-
-| Criterio de la Rúbrica | Evidencia del Proyecto | Puntuación | Auto-evaluación |
-| :--- | :--- | :---: | :---: |
-| **Configuración y estructuración** (15%) | Repositorio GitHub configurado con `.gitignore`, `.env.example` y arquitectura modular en Python (`api.py`, `agent.py`, `db.py`). | 1.5 / 1.5 | Excelente |
-| **Contenerización** (15%) | Creación de `Dockerfile` multiplataforma (con soporte ODBC 18) y `docker-compose.yml` mapeando puertos seguros (`8080:8000`) y cargando variables locales. | 1.5 / 1.5 | Excelente |
-| **Registro en Azure** (20%) | Configuración del Azure Container Registry (ACR) `acragent5XXX` y carga de imágenes Docker etiquetadas automáticamente según el Commit SHA. | 2.0 / 2.0 | Excelente |
-| **Container Apps** (20%) | Configuración de Azure Container Apps con Ingress externo en puerto 8000, variables de entorno e inyección de secrets de forma segura. | 2.0 / 2.0 | Excelente |
-| **Pipeline CI/CD** (20%) | Automatización completa de extremo a extremo mediante GitHub Actions con ejecución de tests unitarios, construcción, publicación y validación HTTP. | 2.0 / 2.0 | Excelente |
-| **Monitoreo y validación** (10%) | Validación automática mediante curl en el pipeline, endpoints `/health` de nube mostrando la conexión SQL activa y logs operativos en ACA. | 1.0 / 1.0 | Excelente |
-| **Total** | **Despliegue automatizado del Agente RAG finalizado de forma correcta** | **10.0 / 10.0** | **Sobresaliente** |
-
 ---
 
-## 9. ANEXO: EVIDENCIAS GRÁFICAS
+## 10. ANEXO: EVIDENCIAS GRÁFICAS
 A continuación se compilan de forma consecutiva todas las capturas de pantalla de evidencias del proyecto recopiladas durante las fases de desarrollo local, base de datos Azure SQL, configuración de ACR/ACA, pipeline CI/CD de GitHub Actions y validaciones en la nube:
 
 ### Evidencia 1
@@ -364,6 +307,3 @@ A continuación se compilan de forma consecutiva todas las capturas de pantalla 
 
 ### Evidencia 35
 ![Evidencia 35](Capturas%20Evidencias/image%20copy%2034.png)
-
----
-
