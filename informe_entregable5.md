@@ -175,7 +175,21 @@ En este proyecto, la API actúa como un puente semántico: recupera dinámicamen
 ## DEFENSA TÉCNICA
 > **“La solución integra un flujo RAG trazable con Azure SQL, Docker y ACR, desplegado en Azure Container Apps y automatizado de extremo a extremo mediante GitHub Actions, GitHub Secrets y etiquetas de imagen asociadas al commit.”**
 
-## 8. ANEXO: EVIDENCIAS GRÁFICAS
+## 8. AUTOEVALUACIÓN Y RÚBRICA
+
+| Criterio de la Rúbrica | Evidencia del Proyecto | Puntuación | Auto-evaluación |
+| :--- | :--- | :---: | :---: |
+| **Configuración y estructuración** (15%) | Repositorio GitHub configurado con `.gitignore`, `.env.example` y arquitectura modular en Python (`api.py`, `agent.py`, `db.py`). | 1.5 / 1.5 | Excelente |
+| **Contenerización** (15%) | Creación de `Dockerfile` multiplataforma (con soporte ODBC 18) y `docker-compose.yml` mapeando puertos seguros (`8080:8000`) y cargando variables locales. | 1.5 / 1.5 | Excelente |
+| **Registro en Azure** (20%) | Configuración del Azure Container Registry (ACR) `acragent5XXX` y carga de imágenes Docker etiquetadas automáticamente según el Commit SHA. | 2.0 / 2.0 | Excelente |
+| **Container Apps** (20%) | Configuración de Azure Container Apps con Ingress externo en puerto 8000, variables de entorno e inyección de secrets de forma segura. | 2.0 / 2.0 | Excelente |
+| **Pipeline CI/CD** (20%) | Automatización completa de extremo a extremo mediante GitHub Actions con ejecución de tests unitarios, construcción, publicación y validación HTTP. | 2.0 / 2.0 | Excelente |
+| **Monitoreo y validación** (10%) | Validación automática mediante curl en el pipeline, endpoints `/health` de nube mostrando la conexión SQL activa y logs operativos en ACA. | 1.0 / 1.0 | Excelente |
+| **Total** | **Despliegue automatizado del Agente RAG finalizado de forma correcta** | **10.0 / 10.0** | **Sobresaliente** |
+
+---
+
+## 9. ANEXO: EVIDENCIAS GRÁFICAS
 A continuación se compilan de forma consecutiva todas las capturas de pantalla de evidencias del proyecto recopiladas durante las fases de desarrollo local, base de datos Azure SQL, configuración de ACR/ACA, pipeline CI/CD de GitHub Actions y validaciones en la nube:
 
 ### Evidencia 1
